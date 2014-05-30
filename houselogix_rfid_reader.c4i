@@ -1,0 +1,264 @@
+<devicedata>
+    <copyright>Copyright 2014 HouseLogix, Inc.  All rights reserved.</copyright>
+    <creator>HouseLogix, Inc.</creator>
+    <manufacturer>HouseLogix, Inc.</manufacturer>
+    <name>RFID Reader</name>
+    <model>RFID Reader</model>
+    <created>12/16/2013 12:00 PM</created>
+    <modified>12/16/2013 12:00 PM</modified>
+    <version>1</version>
+    <small>devices_sm\contactsingle_pressuresensor_open.gif</small>
+    <large>devices_lg\contactsingle_pressuresensor_open.gif</large>
+    <control>lua_gen</control>
+    <controlmethod>serial</controlmethod>
+    <driver>DriverWorks</driver>
+    <proxy>houselogix_rfid_reader</proxy>
+    <connections>
+        <connection>
+            <id>1</id>
+            <facing>6</facing>
+            <connectionname>Serial RS-232</connectionname>
+            <type>1</type>
+            <consumer>True</consumer>
+            <audiosource>False</audiosource>
+            <videosource>False</videosource>
+            <linelevel>True</linelevel>
+            <classes>
+                <class>
+                    <classname>RS_232</classname>
+                </class>
+            </classes>
+        </connection>
+      <connection>
+	      <id>2</id>
+	      <facing>6</facing>
+	      <connectionname>Access Database</connectionname>
+	      <type>1</type>
+	      <consumer>True</consumer>
+	      <audiosource>False</audiosource>
+	      <videosource>False</videosource>
+	      <linelevel>True</linelevel>
+	      <classes>
+	        <class>
+	          <classname>ACCESS_DATABASE</classname>
+	          <autobind>False</autobind>
+	        </class>
+	      </classes>
+	  </connection>
+    </connections>
+    <config>
+        <documentation>
+HouseLogix idTeck RFID Reader
+Driver Version: [v1.0 rev20140527]
+-------------------------------------------------------------------------------------------
+ONLINE DOCUMENTATION
+-------------------------------------------------------------------------------------------
+
+Online Documentation: https://www.houselogix.com/
+Technical Support Site: http://support.houselogix.com
+
+-------------------------------------------------------------------------------------------
+OVERVIEW
+-------------------------------------------------------------------------------------------
+This driver integrates idTeck RFID Card Readers with your Control4 system, through the HouseLogix
+Access Control Database.
+
+Add this driver to your project, and bind it to the RS-232 Serial Port where the idTeck reader is
+connected. Additionally, bind this driver to a HouseLogix Access Control Database driver to manage
+user access.
+
+Anytime an RFID card/badge is scanned, this driver will pass the request on to the 
+Access Control Database for authorization. User accounts and card numbers are managed inside the 
+Database driver. All programming should be attached to the Database driver, as it will fire events
+when a card is granted or denied access.
+
+-------------------------------------------------------------------------------------------
+ACCESS CONTROL DATABASE PROGRAMMING EXAMPLE
+-------------------------------------------------------------------------------------------
+A simple programming implementation:
+
+UserID #1 "John Doe" scans his access card/badge on Reader 1, at the Front Door.
+
+Event: "Access_Verified" is fired, and the lights in the building are turned on.
+
+Event: "Access_Granted_Reader_1" is fired, and the Front Door is unlocked via relay.
+
+Event: "Verified_User_1" is fired, and "John Doe's" favorite radio station begins playing in his office.
+
+-------------------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------------------
+        </documentation>
+        <power_management_method>AlwaysOn</power_management_method>
+        <power_command_delay>0</power_command_delay>
+        <power_delay>0</power_delay>
+        <power_command_needed>False</power_command_needed>
+        <serialsettings>9600 8 none 1 none 232</serialsettings>
+        <script><![CDATA[
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+--HOUSELOGIX RFID READER EXAMPLE
+--Reads RFID tags from idTeck reader, pass card # to HouseLogix Access Control 
+--Database for authentication.
+--
+-- Copyright (c) 2014 HouseLogix, Inc.
+-- Permission is hereby granted, free of charge, to any person obtaining a copy
+-- of this software and associated documentation files (the "Software"), to deal
+-- in the Software without restriction, including without limitation the rights
+-- to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+-- copies of the Software, and to permit persons to whom the Software is
+-- furnished to do so, subject to the following conditions:
+-- The above copyright notice and this permission notice shall be included in
+-- all copies or substantial portions of the Software.
+
+-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+-- IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+-- FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+-- AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+-- LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+-- OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+-- THE SOFTWARE.
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+
+CARD_LENGTH = 11
+PACKET_HEADER = string.char(2)
+PACKET_TAIL_LENGTH = 2
+gReceiveBuffer = ""
+gDebugFlag = false
+
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+--RECEIVEDFROMSERIAL
+--Data might come 1 byte at a time on a HC300 or all at once on a HC800, let's just
+--view it 1 byte at a time and call it a day
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+
+function ReceivedFromSerial(idBinding, strData)
+    if (strData) then dbg(string.format("(RECEIVED FROM SERIAL): %s",strData)) end
+    dbg(hexdump(strData))
+    for i=1,string.len(strData) do
+        Buffer(strData:sub(i,i))
+    end
+end
+
+function Buffer(data)
+    if (NilException(data)) then return end
+    if (data == PACKET_HEADER) then
+        gReceiveBuffer = ""
+    end
+    gReceiveBuffer = gReceiveBuffer .. data
+    if (string.len(gReceiveBuffer) == CARD_LENGTH) then
+        ProcessBuffer(gReceiveBuffer)
+    end
+end
+
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+--PROCESSBUFFER
+--Called when buffer meets CARD_LENGTH
+--Pull the card number from packet and send it to database for authentication
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+
+function ProcessBuffer(buffer)
+    if (NilException(buffer)) then return end
+    if (buffer:sub(1,1) == PACKET_HEADER and string.len(buffer) == CARD_LENGTH) then
+        local cardNum = buffer:sub(2,CARD_LENGTH-PACKET_TAIL_LENGTH)
+        dbg(string.format("CARD TO CHECK: %s",cardNum))
+        C4:SendToProxy(2,"VERIFY",{CARD = cardNum})
+    end
+end
+
+function ReceivedFromProxy(idBinding, strCommand, tParams)
+    strCommand = strCommand or ""
+    tParams = tParams or {}
+    dbg(string.format("(RECEIVED FROM PROXY): %s",strCommand))
+    if (COMMAND_HANDLER[strCommand] ~= nil and type(COMMAND_HANDLER[strCommand]) == "function") then
+        COMMAND_HANDLER[strCommand](tParams)
+    else
+        dbg("(RECEIVED FROM PROXY): UNHANDLED COMMAND | THROW AWAY")
+    end
+end
+
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+--VERIFICATION_RESPONSE
+--Returned from the database, we don't need to do anything with the response,
+--since the database contains all the functionality
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+
+COMMAND_HANDLER = {}
+
+function COMMAND_HANDLER.VERIFICATION_RESPONSE(tParams)
+    tParams = tParams or {}
+    if (tParams["RESPONSE"]) then
+        dbg("(VERIFICATION_RESPONSE): " .. tParams["RESPONSE"])
+    else
+        dbg("(VERIFICATION_RESPONSE): NIL RESPONSE")
+    end
+end
+
+function OnPropertyChanged(strProperty)
+    if (strProperty == "Debug Mode") then
+        gDebugFlag = Properties[strProperty] == "ON"
+    end
+end
+
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+--HOUSELOGIX EXCEPTION HANDLING ROUTINES
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+--//////////--//////////--//////////--//////////--//////////--//////////--//////////
+
+function NilException(...)
+    local throw = false
+    local msg = ""
+    if (gDebugFlag) then
+        msg = string.format("(%s): ", string.upper(
+            (function()
+                return debug.getinfo(3,"n").name or debug.getinfo(3,"S").linedefined
+            end)()
+            ))
+    end
+    for i=1,select("#",...) do
+        local temp = select(i,...)
+        if (temp) then
+            if (type(temp) == "string") then
+                temp = string.format("\"%s\"",temp)
+            end
+            msg = msg .. temp .. " "
+        else
+            msg = msg .. "NIL PARAM"
+            throw = true
+        end
+    end
+    if (throw) then msg = msg .. " -- THROWING AWAY" end
+    dbg(msg)
+    return throw
+end
+
+function dbg(str)
+    if (gDebugFlag) then print(str) end
+end
+      ]]></script>
+        <actions>
+        </actions>
+        <properties>                                
+	    <property>
+                <name>Debug Mode</name>
+                <type>LIST</type>
+                <readonly>false</readonly>
+                <default>OFF</default>
+                <items>
+                    <item>OFF</item>
+                    <item>ON</item>
+                </items>
+            </property>
+        </properties>
+	<commands>
+	</commands>
+    </config>
+</devicedata>
